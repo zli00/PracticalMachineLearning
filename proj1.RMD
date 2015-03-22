@@ -1,0 +1,145 @@
+---
+title: "Prediction Assignment for Practical Machine Learning"
+author: "ZL"
+date: "Saturday, March 21, 2015"
+output: html_document
+---
+
+Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to build a statistics model, and use the model to predict the manner in which they did the exercise. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+data
+The training data for this project are available here: 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available here: 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+data analysis
+1. Based on the original paper, the data set consist of 19622 observation of 160 variables, including features on the Euler angles (roll, pitch and yaw), as well as the raw accelerometer, gyroscope and magnetometer readings. For the Euler angles of each of the four sensors, eight features were calculated: mean, variance, standard deviation, max, min, amplitude, kurtosis and skew-ness, generating in total 96 derived feature sets (columns that have data missing). 
+Becasue of limited computation power, I will only use the 60 raw features to build the model, since they capture most of the information.  
+
+```{r}
+# ensure the results are repeatable
+set.seed(1)
+
+# load the library
+library(caret)
+
+# load the data
+training<-read.csv("pml-training.csv")
+testing<-read.csv("pml-testing.csv")
+
+#remove column with NA
+temp<-which(colSums(is.na(training))>1)
+subTraining<-training[,-c(temp)]
+
+#remove column with blank
+temp<-which(colSums(subTraining == "") != 0)
+subTraining<-subTraining[,-c(temp)]
+```
+
+2. Some of the attributes in the data set are highly correlated with each other.  The findCorrelation function from the Caret R package is used to analyze the correlation matrix of the data attributes, and find attributes that can be removed. 
+After ths step, only 21 features are used to build model.
+
+```{r}
+# calculate correlation matrix
+dataOnly<-subTraining[,8:59]
+correlationMatrix <- cor(dataOnly)
+
+# summarize the correlation matrix
+# print(correlationMatrix)
+
+# find attributes that are highly corrected 
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.5)
+
+# print indexes of highly correlated attributes
+print(highlyCorrelated)
+
+
+reducedDataOnly<-dataOnly[,-highlyCorrelated]
+reducedTraining<-reducedDataOnly
+reducedTraining$classe<-training$classe
+
+```
+3. The importance of features can be estimated from data by building a model. Here, the Learning Vector Quantization (LVQ) model is build. The varImp is then used to estimate the variable importance, which is printed and plotted. It shows that the pitch_forearm, roll_dumbbell, and pitch_dumbbell are the top 3 most important attributes in the dataset.
+
+
+```{r, cache = TRUE}
+
+#rank feature by importance
+# ensure results are repeatable
+set.seed(1)
+
+
+# prepare training scheme
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+# train the model
+model <- train(classe~., data=reducedTraining, method="lvq", preProcess="scale", trControl=control)
+# estimate variable importance
+importance <- varImp(model, scale=FALSE)
+# summarize importance
+print(importance)
+# plot importance
+plot(importance)
+
+
+```
+
+3. Automatic feature selection methods can be used to build many models with different subsets of a dataset and identify those attributes that are and are not required to build an accurate model.
+
+Here, the Recursive Feature Elimination or RFE function form the caret R package is used to furthure analyze the feature importances. A Random Forest and cross validation algorithm were used on each iteration to evaluate the model. The algorithm is configured to explore all possible subsets of the attributes. All 21 attributes are selected in this example, although in the plot showing the accuracy of the different attribute subset sizes, we can see that just 8 attributes gives almost comparable results.
+
+```{r, cache = TRUE}
+
+#feature selection
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+results <- rfe(reducedTraining[,1:21], reducedTraining[,22], sizes=c(1:8), rfeControl=control)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+
+```
+
+4. Model was build using all 21 variables and the random forest method.
+```{r}
+#train with random forest
+fitAll<-train(classe~.,data=reducedTraining, method="rf")
+fitAll
+
+```
+
+5. Estimate of in and out of sample error rate. Prediction using part of the training data set was used to calculated the in sample error rate:
+
+```{r}
+
+# Estimate correct prediction rate
+inTrain<-createDataPartition(y=training$classe, p=0.8, list= FALSE)
+trainTrain<-training[inTrain, ]
+trainTest<-training[-inTrain, ]
+pred<-predict(fitAll, trainTest)
+errorRate<-sum(trainTest$classe!=pred)/nrow(trainTest)
+errorRate
+```
+the in sample error rate is `r errorRate`, because of overfiting, the out of sample error will be a little bit higher than the in sample error rate.
+
+5. Prediction with the test data set.
+
+```{r}
+answers<-predict(fitAll,testing)
+answers
+```
+
+Summaray
+A statistics model was build using data (3923 observations of 161 variables) from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Several methods were use for evaluating the feature importance and for feature selection. In the end 21 features were used for final modeling. The in and out of sample error rate were also estimated, and the model seemed very accurate. finally, the model was used to predict 20 different test cases.
+
+
+
+
+
